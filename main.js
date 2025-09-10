@@ -1,8 +1,3 @@
-/* ============================
- *  Lógica proposicional – Tableaux + Tabela-verdade
- *  Regras suportadas: ∼, ^, v, →, ↔ (e variações ~, ¬, ∧, ∨, ->, <->)
- * ============================ */
-
 const exprInput = document.getElementById('expr');
 const errorBox  = document.getElementById('error');
 const varGrid   = document.getElementById('varGrid');
@@ -10,7 +5,6 @@ const truthHead = document.querySelector('#truthTable thead tr');
 const truthBody = document.querySelector('#truthTable tbody');
 const analysisBox = document.getElementById('analysisBox');
 
-// monta grid A..L (como no print; mas o parser aceita A..Z)
 "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('').slice(0,12).forEach(ch=>{
   const b = document.createElement('button');
   b.className='btn';
@@ -19,7 +13,6 @@ const analysisBox = document.getElementById('analysisBox');
   varGrid.appendChild(b);
 });
 
-// Inserção nos botões
 document.querySelectorAll('[data-insert]').forEach(btn=>{
   btn.addEventListener('click',()=>{
     insertAtCursor(exprInput, btn.dataset.insert);
@@ -40,24 +33,17 @@ function insertAtCursor(el, text){
   el.focus(); el.setSelectionRange(pos,pos);
 }
 
-/* ========== Tokenização / Normalização ========== */
 const ALLOWED = new Set(['∼','^','v','→','↔','(',')']);
 function normalize(raw){
-  // remove espaços
   let s = raw.replace(/\s+/g,'');
-  // normaliza equivalentes
   s = s
     .replace(/¬|~/g,'∼')
     .replace(/∧/g,'^')
     .replace(/∨/g,'v')
     .replace(/<->|↔/g,'↔')
     .replace(/->|→/g,'→');
-
-  // protege 'v' (operador) para não virar 'V' no upper
   s = s.replace(/v/g, '§OR§');
-  // upper nas letras (variáveis)
   s = s.toUpperCase();
-  // devolve 'v'
   s = s.replace(/§OR§/g, 'v');
   return s;
 }
@@ -85,15 +71,6 @@ function checkAllowedSymbols(tokens){
   return null;
 }
 
-/* ========== Parser (FBF) – Recursive Descent ==========
- * Precedência:  ^  >  v  >  →  >  ↔
- * Gramática:
- *   E  := D ( '↔' D )*
- *   D  := C ( '→' C )*
- *   C  := B ( 'v' B )*
- *   B  := A ( '^' A )*
- *   A  := '∼' A | VAR | '(' E ')'
- */
 function parse(tokens){
   let i=0;
   const peek = () => tokens[i];
@@ -106,25 +83,21 @@ function parse(tokens){
     if (match('(')){ const f=E(); if(!match(')')) throw new Error("Parêntese ')' esperado"); return f; }
     throw new Error('FBF inválida perto de "'+displayToken(peek())+'"');
   }
-  // AND (maior precedência)
   function B(){
     let node=A();
     while (match('^')) node={type:'and', left:node, right:A()};
     return node;
   }
-  // OR
   function C(){
     let node=B();
     while (match('v')) node={type:'or', left:node, right:B()};
     return node;
   }
-  // IMPLIES
   function D(){
     let node=C();
     while (match('→')) node={type:'imp', left:node, right:C()};
     return node;
   }
-  // IFF
   function E(){
     let node=D();
     while (match('↔')) node={type:'iff', left:node, right:D()};
@@ -141,7 +114,6 @@ function displayToken(t){
   return t.value ?? '?';
 }
 
-/* ========== Util: coleta de variáveis e avaliação ========== */
 function collectVars(ast, set=new Set()){
   switch(ast.type){
     case 'var': set.add(ast.name); break;
@@ -162,17 +134,14 @@ function evalAST(ast, env){
   }
 }
 
-/* ========== Tableaux (satisfatibilidade) ========== */
 function isLiteral(sf){
   return sf.node.type==='var' || (sf.node.type==='not' && sf.node.sub.type==='var');
 }
 
-// Regras de decomposição
 function decompose(sf){
   const s = sf.sign, n = sf.node;
   switch(n.type){
     case 'not':
-      // T ~P -> F P ; F ~P -> T P
       return { kind:'alpha', sets:[ [{sign:(s==='T'?'F':'T'), node:n.sub}] ] };
     case 'and':
       if (s==='T')  return {kind:'alpha', sets:[ [{sign:'T',node:n.left},{sign:'T',node:n.right}] ]};
@@ -197,36 +166,30 @@ function decompose(sf){
   }
 }
 
-// Fecha? true = todos ramos fecharam (insatisfatível)
 function tableauClosed(initialSigned){
   const stack = [ { pending:[initialSigned], T:new Set(), F:new Set() } ];
 
   while(stack.length){
     const br = stack.pop();
-
-    // conflito imediato
     for(const v of br.T){ if (br.F.has(v)) { br.closed=true; break; } }
     if (br.closed) continue;
 
-    // pega 1 não-literal
     const idx = br.pending.findIndex(sf => !isLiteral(sf));
     if (idx === -1){
-      // só literais: aplica e verifica
       for(const sf of br.pending){
         if (sf.node.type==='var'){
           const v=sf.node.name;
           (sf.sign==='T' ? br.T : br.F).add(v);
-        } else { // ~P
+        } else {
           const v=sf.node.sub.name;
           (sf.sign==='T' ? br.F : br.T).add(v);
         }
       }
       for(const v of br.T){ if (br.F.has(v)) { br.closed=true; break; } }
-      if (!br.closed) return false; // ramo aberto ⇒ satisfaz
+      if (!br.closed) return false;
       continue;
     }
 
-    // expande
     const sf = br.pending.splice(idx,1)[0];
     const rule = decompose(sf);
     if (!rule){ br.pending.push(sf); continue; }
@@ -242,12 +205,11 @@ function tableauClosed(initialSigned){
       }
     }
   }
-  return true; // todos ramos fecharam
+  return true;
 }
 
 function cloneBranch(b){ return { pending:[...b.pending], T:new Set(b.T), F:new Set(b.F) } }
 
-/* ========== UI runner ========== */
 function run(){
   errorBox.textContent='';
   truthHead.innerHTML=''; truthBody.innerHTML='';
@@ -260,10 +222,9 @@ function run(){
     const symErr = checkAllowedSymbols(tokens);
     if (symErr) throw new Error(symErr);
 
-    const ast = parse(tokens); // se não lançar, é FBF
+    const ast = parse(tokens);
     const vars = collectVars(ast);
 
-    // --- Tabela-verdade ---
     if (vars.length > 8){
       truthHead.innerHTML = `<th>Expressão</th>`;
       truthBody.innerHTML = `<tr><td style="text-align:left;padding:12px">Muitas variáveis (${vars.length}). A tabela ficaria enorme. O veredito abaixo (Tableaux) continua válido.</td></tr>`;
@@ -271,22 +232,15 @@ function run(){
       renderTruthTable(ast, vars);
     }
 
-    // --- Veredito por Tableaux ---
-    // Tautologia ⇔ F(φ) fecha; Contradição ⇔ T(φ) fecha; senão, Contingente
     const isFTClosed = tableauClosed({sign:'F', node:ast});
     const isTTClosed = tableauClosed({sign:'T', node:ast});
-    const verdict = {
-      taut: isFTClosed,
-      contrad: isTTClosed,
-      cont: !(isFTClosed || isTTClosed)
-    };
+    const verdict = { taut: isFTClosed, contrad: isTTClosed, cont: !(isFTClosed || isTTClosed) };
     renderAnalysis(verdict);
   }catch(e){
     errorBox.textContent = e.message || String(e);
   }
 }
 
-/* ========== Render helpers ========== */
 function renderTruthTable(ast, vars){
   truthHead.innerHTML = vars.map(v=>`<th>${v}</th>`).join('') + `<th>${prettyExpr(normalize(exprInput.value))}</th>`;
   truthBody.innerHTML = '';
@@ -328,5 +282,4 @@ function renderAnalysis(r){
   analysisBox.appendChild(div);
 }
 
-// render inicial
 run();
