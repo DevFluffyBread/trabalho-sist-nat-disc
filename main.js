@@ -1,3 +1,4 @@
+//Elementos de UI / Bindings
 const exprInput = document.getElementById('expr');
 const errorBox  = document.getElementById('error');
 const varGrid   = document.getElementById('varGrid');
@@ -5,7 +6,8 @@ const truthHead = document.querySelector('#truthTable thead tr');
 const truthBody = document.querySelector('#truthTable tbody');
 const analysisBox = document.getElementById('analysisBox');
 
-"ABCDEFGHIJKLMNOPQRSTUVWXYZ".split('').slice(0,12).forEach(ch=>{
+// Grade de variáveis pra inserir rápido
+"PQABCDEFGHIJ".split('').slice(0,12).forEach(ch=>{
   const b = document.createElement('button');
   b.className='btn';
   b.textContent=ch;
@@ -13,6 +15,7 @@ const analysisBox = document.getElementById('analysisBox');
   varGrid.appendChild(b);
 });
 
+// Botões básicos
 document.querySelectorAll('[data-insert]').forEach(btn=>{
   btn.addEventListener('click',()=>{
     insertAtCursor(exprInput, btn.dataset.insert);
@@ -33,16 +36,17 @@ function insertAtCursor(el, text){
   el.focus(); el.setSelectionRange(pos,pos);
 }
 
+//checa símbolos permitidos
 const ALLOWED = new Set(['∼','^','v','→','↔','(',')']);
 function normalize(raw){
   let s = raw.replace(/\s+/g,'');
   s = s
-    .replace(/¬|~/g,'∼')
-    .replace(/∧/g,'^')
-    .replace(/∨/g,'v')
-    .replace(/<->|↔/g,'↔')
-    .replace(/->|→/g,'→');
-  s = s.replace(/v/g, '§OR§');
+    .replace(/¬|~/g,'∼')    // negação
+    .replace(/∧/g,'^')      // conjunção
+    .replace(/∨/g,'v')      // disjunção
+    .replace(/<->|↔/g,'↔')  // bicondicional
+    .replace(/->|→/g,'→');  // condicional
+  s = s.replace(/v/g, '§OR§'); // protege o 'v' (evita virar 'V' no upper)
   s = s.toUpperCase();
   s = s.replace(/§OR§/g, 'v');
   return s;
@@ -71,6 +75,8 @@ function checkAllowedSymbols(tokens){
   return null;
 }
 
+// PARSER (FBF)
+// Lê os tokens e constrói a Árvore
 function parse(tokens){
   let i=0;
   const peek = () => tokens[i];
@@ -114,6 +120,7 @@ function displayToken(t){
   return t.value ?? '?';
 }
 
+// coleta variáveis e avalia p/ tabela-verdade
 function collectVars(ast, set=new Set()){
   switch(ast.type){
     case 'var': set.add(ast.name); break;
@@ -134,10 +141,15 @@ function evalAST(ast, env){
   }
 }
 
+// TABLEAUX
+// trabalhar com fórmulas "assinadas": T φ (φ verdadeira) / F φ (φ falsa).
+// Regras α (conjuntivas) expandem no MESMO ramo; regras β (disjuntivas) bifurcam.
+// Um ramo "FECHA" quando aparece contradição literal
 function isLiteral(sf){
   return sf.node.type==='var' || (sf.node.type==='not' && sf.node.sub.type==='var');
 }
 
+// Regras de decomposição (α/β) para cada conectivo sob T/F
 function decompose(sf){
   const s = sf.sign, n = sf.node;
   switch(n.type){
@@ -166,14 +178,18 @@ function decompose(sf){
   }
 }
 
+// Executor do tableaux: percorre ramos e verifica se TODOS fecham.
 function tableauClosed(initialSigned){
   const stack = [ { pending:[initialSigned], T:new Set(), F:new Set() } ];
 
   while(stack.length){
     const br = stack.pop();
+
+    //FECHA RAMO POR CONTRADIÇÃO
     for(const v of br.T){ if (br.F.has(v)) { br.closed=true; break; } }
     if (br.closed) continue;
 
+    // Pega um não-literal pra expandir (se só tiver literal, decide o ramo)
     const idx = br.pending.findIndex(sf => !isLiteral(sf));
     if (idx === -1){
       for(const sf of br.pending){
@@ -185,11 +201,13 @@ function tableauClosed(initialSigned){
           (sf.sign==='T' ? br.F : br.T).add(v);
         }
       }
+      // Checa contradição final
       for(const v of br.T){ if (br.F.has(v)) { br.closed=true; break; } }
-      if (!br.closed) return false;
+      if (!br.closed) return false; // ramo aberto
       continue;
     }
 
+    // Expansão por regra α (mesmo ramo) ou β
     const sf = br.pending.splice(idx,1)[0];
     const rule = decompose(sf);
     if (!rule){ br.pending.push(sf); continue; }
@@ -205,11 +223,12 @@ function tableauClosed(initialSigned){
       }
     }
   }
-  return true;
+  return true; // todos os ramos fecharam
 }
 
 function cloneBranch(b){ return { pending:[...b.pending], T:new Set(b.T), F:new Set(b.F) } }
 
+// integra tudo (UI -> parser -> tabela-verdade -> tableaux)
 function run(){
   errorBox.textContent='';
   truthHead.innerHTML=''; truthBody.innerHTML='';
@@ -222,9 +241,10 @@ function run(){
     const symErr = checkAllowedSymbols(tokens);
     if (symErr) throw new Error(symErr);
 
-    const ast = parse(tokens);
-    const vars = collectVars(ast);
+    const ast = parse(tokens);           // (FBF válida)
+    const vars = collectVars(ast);       // variáveis distintas
 
+    // Tabela-verdade
     if (vars.length > 8){
       truthHead.innerHTML = `<th>Expressão</th>`;
       truthBody.innerHTML = `<tr><td style="text-align:left;padding:12px">Muitas variáveis (${vars.length}). A tabela ficaria enorme. O veredito abaixo (Tableaux) continua válido.</td></tr>`;
@@ -232,6 +252,8 @@ function run(){
       renderTruthTable(ast, vars);
     }
 
+    // Veredito via Tableaux:
+    // Tautologia ⇔ F(φ) fecha; Contradição ⇔ T(φ) fecha; senão Contingente.
     const isFTClosed = tableauClosed({sign:'F', node:ast});
     const isTTClosed = tableauClosed({sign:'T', node:ast});
     const verdict = { taut: isFTClosed, contrad: isTTClosed, cont: !(isFTClosed || isTTClosed) };
@@ -241,6 +263,7 @@ function run(){
   }
 }
 
+// Renderização da tabela-verdade e do veredito
 function renderTruthTable(ast, vars){
   truthHead.innerHTML = vars.map(v=>`<th>${v}</th>`).join('') + `<th>${prettyExpr(normalize(exprInput.value))}</th>`;
   truthBody.innerHTML = '';
